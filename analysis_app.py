@@ -9,13 +9,9 @@ import os
 
 # --- 日本語フォント設定（高安定版） ---
 def setup_japanese_font():
-    # フォントファイルの保存名
     font_file = "ipaexg.ttf"
-    
-    # フォントファイルがない、またはサイズが異常に小さい（失敗データ）場合はダウンロード
     if not os.path.exists(font_file) or os.path.getsize(font_file) < 1000:
         import urllib.request
-        # japanize-matplotlibが参照している安定したGitHub上のフォントファイルURL
         url = "https://raw.githubusercontent.com/yutodama/japanize-matplotlib/master/japanize_matplotlib/fonts/ipaexg.ttf"
         try:
             with st.spinner("日本語フォント(IPAexゴシック)をダウンロード中..."):
@@ -24,7 +20,6 @@ def setup_japanese_font():
             st.error(f"フォントのダウンロードに失敗しました: {e}")
             return
 
-    # フォントをmatplotlibに登録して設定
     try:
         fm.fontManager.addfont(font_file)
         font_prop = fm.FontProperties(fname=font_file)
@@ -32,34 +27,28 @@ def setup_japanese_font():
     except Exception as e:
         st.error(f"フォント設定エラー: {e}")
 
-# アプリ起動時にフォント設定を実行
 setup_japanese_font()
 # ---------------------------------------
 
-# ページ設定
 st.set_page_config(page_title="アンケート分析 & 決定木ツール", layout="wide")
 
 st.title("📊 アンケート自動集計 & 決定木分析アプリ")
 st.markdown("ExcelやCSVをアップロードして、クロス集計と決定木分析を自動化します。")
 
-# 1. ファイルアップロード
 st.sidebar.header("データのアップロード")
 uploaded_file = st.sidebar.file_uploader("ExcelまたはCSVファイルをアップロード", type=['xlsx', 'csv'])
 
 if uploaded_file is not None:
-    # データの読み込み
     try:
         if uploaded_file.name.endswith('.csv'):
             df = pd.read_csv(uploaded_file)
         else:
             df = pd.read_excel(uploaded_file)
-        
         st.sidebar.success("読み込み成功！")
     except Exception as e:
         st.error(f"エラーが発生しました: {e}")
         st.stop()
 
-    # タブで機能を分ける
     tab1, tab2, tab3 = st.tabs(["📋 データ確認", "📈 クロス集計", "🌳 決定木分析"])
 
     # --- タブ1: データ確認 ---
@@ -76,25 +65,47 @@ if uploaded_file is not None:
         with col1:
             index_col = st.selectbox("行（Index）を選択", df.columns, index=0)
         with col2:
-            columns_col = st.selectbox("列（Column）を選択", df.columns, index=min(1, len(df.columns)-1))
+            # 初期値をindex_colと被らないように少しずらす工夫
+            default_col_idx = 1 if len(df.columns) > 1 else 0
+            columns_col = st.selectbox("列（Column）を選択", df.columns, index=default_col_idx)
 
-        # クロス集計の実行
-        cross_tab = pd.crosstab(df[index_col], df[columns_col])
-        
-        # 表示
-        st.write("##### 集計表")
-        st.dataframe(cross_tab)
-
-        # グラフ化
-        graph_type = st.radio("グラフの種類", ["ヒートマップ", "積み上げ棒グラフ"], horizontal=True)
-        
-        if graph_type == "ヒートマップ":
-            fig = px.imshow(cross_tab, text_auto=True, aspect="auto", color_continuous_scale='Blues')
+        # エラー回避: 行と列が同じ場合
+        if index_col == columns_col:
+            st.warning("⚠️ **エラー回避**: 行と列には異なる項目を選択してください。（同じ項目同士ではクロス集計できません）")
         else:
-            cross_tab_reset = cross_tab.reset_index().melt(id_vars=index_col, var_name=columns_col, value_name="Count")
-            fig = px.bar(cross_tab_reset, x=index_col, y="Count", color=columns_col, title=f"{index_col} × {columns_col}")
-        
-        st.plotly_chart(fig, use_container_width=True)
+            # クロス集計の実行
+            cross_tab = pd.crosstab(df[index_col], df[columns_col])
+            
+            st.write("##### 集計表")
+            st.dataframe(cross_tab)
+
+            # グラフ化
+            graph_type = st.radio("グラフの種類", ["ヒートマップ", "積み上げ棒グラフ"], horizontal=True)
+            
+            if graph_type == "ヒートマップ":
+                fig = px.imshow(cross_tab, text_auto=True, aspect="auto", color_continuous_scale='Blues')
+            else:
+                # エラー回避: 「Count」という名前が既にデータにある場合の対策
+                val_name = "Count"
+                if val_name == index_col or val_name == columns_col:
+                    val_name = "Frequency" # 名前が被ったらFrequencyに変更
+
+                # 積み上げ棒グラフ用にデータを整形
+                cross_tab_reset = cross_tab.reset_index().melt(
+                    id_vars=index_col, 
+                    var_name=columns_col, 
+                    value_name=val_name
+                )
+                
+                fig = px.bar(
+                    cross_tab_reset, 
+                    x=index_col, 
+                    y=val_name, 
+                    color=columns_col, 
+                    title=f"{index_col} × {columns_col}"
+                )
+            
+            st.plotly_chart(fig, use_container_width=True)
 
     # --- タブ3: 決定木分析 ---
     with tab3:
@@ -125,7 +136,6 @@ if uploaded_file is not None:
                 clf = DecisionTreeClassifier(max_depth=3, random_state=42)
                 clf.fit(X, y)
 
-                # フォント指定済みの設定で描画
                 fig, ax = plt.subplots(figsize=(14, 7))
                 plot_tree(clf, feature_names=feature_cols, class_names=True, filled=True, ax=ax, fontsize=12)
                 st.pyplot(fig)
