@@ -4,7 +4,33 @@ import plotly.express as px
 from sklearn.tree import DecisionTreeClassifier, plot_tree
 from sklearn.preprocessing import LabelEncoder
 import matplotlib.pyplot as plt
-import japanize_matplotlib # クラウドでの日本語化に必須
+import matplotlib.font_manager as fm
+import os
+
+# --- 日本語フォント設定（全環境対応版） ---
+def setup_japanese_font():
+    # フォントファイルの保存先
+    font_path = "ipaexg.ttf"
+    
+    # フォントファイルがなければダウンロードする
+    if not os.path.exists(font_path):
+        import urllib.request
+        # IPAexゴシック（標準的な日本語フォント）のダウンロードURL
+        url = "https://github.com/minodisk/font-ipa/raw/master/fonts/ipaexg.ttf"
+        try:
+            with st.spinner("日本語フォントを準備中..."):
+                urllib.request.urlretrieve(url, font_path)
+        except Exception as e:
+            st.error(f"フォントのダウンロードに失敗しました: {e}")
+            return
+
+    # フォントをmatplotlibに登録
+    fm.fontManager.addfont(font_path)
+    plt.rc('font', family='IPAexGothic')
+
+# アプリ起動時にフォント設定を実行
+setup_japanese_font()
+# ---------------------------------------
 
 # ページ設定
 st.set_page_config(page_title="アンケート分析 & 決定木ツール", layout="wide")
@@ -95,7 +121,7 @@ if uploaded_file is not None:
                 clf = DecisionTreeClassifier(max_depth=3, random_state=42)
                 clf.fit(X, y)
 
-                # クラウド用: japanize_matplotlib が効くのでフォント指定は不要
+                # フォント指定済みの設定で描画
                 fig, ax = plt.subplots(figsize=(14, 7))
                 plot_tree(clf, feature_names=feature_cols, class_names=True, filled=True, ax=ax, fontsize=12)
                 st.pyplot(fig)
