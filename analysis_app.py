@@ -7,26 +7,31 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import os
 
-# --- 日本語フォント設定（全環境対応版） ---
+# --- 日本語フォント設定（Googleフォント版） ---
 def setup_japanese_font():
-    # フォントファイルの保存先
-    font_path = "ipaexg.ttf"
+    # フォントファイルの保存名
+    font_file = "NotoSansJP-Regular.ttf"
     
     # フォントファイルがなければダウンロードする
-    if not os.path.exists(font_path):
+    if not os.path.exists(font_file):
         import urllib.request
-        # IPAexゴシック（標準的な日本語フォント）のダウンロードURL
-        url = "https://github.com/minodisk/font-ipa/raw/master/fonts/ipaexg.ttf"
+        # Google Fontsの公式Githubから「Noto Sans JP」をダウンロード
+        url = "https://github.com/google/fonts/raw/main/ofl/notosansjp/NotoSansJP-Regular.ttf"
         try:
-            with st.spinner("日本語フォントを準備中..."):
-                urllib.request.urlretrieve(url, font_path)
+            with st.spinner("日本語フォントをダウンロード中..."):
+                urllib.request.urlretrieve(url, font_file)
         except Exception as e:
             st.error(f"フォントのダウンロードに失敗しました: {e}")
             return
 
-    # フォントをmatplotlibに登録
-    fm.fontManager.addfont(font_path)
-    plt.rc('font', family='IPAexGothic')
+    # フォントをmatplotlibに登録して設定
+    try:
+        fm.fontManager.addfont(font_file)
+        # 登録されたフォントプロパティから名前を取得して設定
+        font_prop = fm.FontProperties(fname=font_file)
+        plt.rcParams['font.family'] = font_prop.get_name()
+    except Exception as e:
+        st.error(f"フォント設定エラー: {e}")
 
 # アプリ起動時にフォント設定を実行
 setup_japanese_font()
