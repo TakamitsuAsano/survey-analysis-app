@@ -4,4 +4,3 @@ plotly
 scikit-learn
 matplotlib
 openpyxl
-japanize-matplotlib
