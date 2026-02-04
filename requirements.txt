@@ -4,3 +4,4 @@ plotly
 scikit-learn
 matplotlib
 openpyxl
+st-gsheets-connection
