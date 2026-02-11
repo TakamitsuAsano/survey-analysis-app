@@ -22,12 +22,11 @@ def setup_japanese_font():
         except Exception as e:
             st.error(f"フォント設定エラー: {e}")
     else:
-        # 万が一見つからない場合のフォールバック（Mac/Windows用など）
-        # ローカル環境などで動かす場合のために標準的なフォントを探す
+        # 万が一見つからない場合のフォールバック（Mac/Windowsローカル実行用など）
         try:
             plt.rcParams['font.family'] = 'Hiragino Sans' # Mac用
         except:
-            pass # 何もしない（豆腐化するがエラーでは止まらない）
+            pass # 何もしない
 
 setup_japanese_font()
 # ---------------------------------------
@@ -92,8 +91,21 @@ if df is not None:
             st.warning("⚠️ 行と列には異なる項目を選択してください。")
         else:
             cross_tab = pd.crosstab(df[index_col], df[columns_col])
+            
             st.write("##### 集計表")
-            st.dataframe(cross_tab)
+            st.caption("💡 **表の中をクリック** して `Ctrl + A` (全選択) → `Ctrl + C` (コピー) でExcelに貼り付けられます。")
+            
+            # 【変更点】st.dataframe ではなく st.data_editor を使用
+            st.data_editor(cross_tab)
+
+            # (念のためダウンロードボタンも残しておきます)
+            csv = cross_tab.to_csv().encode('utf-8_sig')
+            st.download_button(
+                label="📥 CSVでダウンロード",
+                data=csv,
+                file_name=f'cross_tab_{index_col}_{columns_col}.csv',
+                mime='text/csv',
+            )
 
             graph_type = st.radio("グラフの種類", ["ヒートマップ", "積み上げ棒グラフ"], horizontal=True)
             if graph_type == "ヒートマップ":
@@ -137,7 +149,7 @@ if df is not None:
                 plot_tree(clf, feature_names=feature_cols_tree, class_names=True, filled=True, ax=ax, fontsize=12)
                 st.pyplot(fig)
 
-    # --- タブ4: ドライバー分析 (重回帰/ロジスティック回帰) ---
+    # --- タブ4: ドライバー分析 ---
     with tab4:
         st.subheader("🚀 要因（ドライバー）分析")
         st.markdown("目的変数に対して、どの要素がプラス/マイナスに影響しているかを分析します。")
