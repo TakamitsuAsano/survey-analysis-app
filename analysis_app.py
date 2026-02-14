@@ -8,13 +8,11 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import os
 from streamlit_gsheets import GSheetsConnection
+from st_copy_to_clipboard import st_copy_to_clipboard # 追加: コピーボタン用
 
 # --- 日本語フォント設定（システムインストール版） ---
 def setup_japanese_font():
-    # packages.txt でインストールされたフォントの場所
     font_path = "/usr/share/fonts/opentype/ipaexfont-gothic/ipaexg.ttf"
-    
-    # フォントファイルが存在するか確認して設定
     if os.path.exists(font_path):
         try:
             fm.fontManager.addfont(font_path)
@@ -22,11 +20,10 @@ def setup_japanese_font():
         except Exception as e:
             st.error(f"フォント設定エラー: {e}")
     else:
-        # 万が一見つからない場合のフォールバック（Mac/Windowsローカル実行用など）
         try:
-            plt.rcParams['font.family'] = 'Hiragino Sans' # Mac用
+            plt.rcParams['font.family'] = 'Hiragino Sans'
         except:
-            pass # 何もしない
+            pass
 
 setup_japanese_font()
 # ---------------------------------------
@@ -66,7 +63,6 @@ elif input_method == "Googleスプレッドシート":
 
 # --- 分析メイン処理 ---
 if df is not None:
-    # データの前処理
     df = df.dropna(how='all')
 
     tab1, tab2, tab3, tab4 = st.tabs(["📋 データ確認", "📈 クロス集計", "🌳 決定木分析", "🚀 要因(ドライバー)分析"])
@@ -93,19 +89,16 @@ if df is not None:
             cross_tab = pd.crosstab(df[index_col], df[columns_col])
             
             st.write("##### 集計表")
-            st.caption("💡 **表の中をクリック** して `Ctrl + A` (全選択) → `Ctrl + C` (コピー) でExcelに貼り付けられます。")
             
-            # 【変更点】st.dataframe ではなく st.data_editor を使用
-            st.data_editor(cross_tab)
-
-            # (念のためダウンロードボタンも残しておきます)
-            csv = cross_tab.to_csv().encode('utf-8_sig')
-            st.download_button(
-                label="📥 CSVでダウンロード",
-                data=csv,
-                file_name=f'cross_tab_{index_col}_{columns_col}.csv',
-                mime='text/csv',
-            )
+            # --- ここを変更: コピーボタンの実装 ---
+            # Excelに貼り付けやすい形式（タブ区切り）に変換
+            # header=True, index=True で行名・列名を確実に含めます
+            copy_text = cross_tab.to_csv(sep='\t')
+            
+            st_copy_to_clipboard(copy_text, "📋 表をコピー (ヘッダー付)", "✅ コピーしました！Excelに貼り付けてください")
+            
+            st.dataframe(cross_tab) 
+            # ----------------------------------
 
             graph_type = st.radio("グラフの種類", ["ヒートマップ", "積み上げ棒グラフ"], horizontal=True)
             if graph_type == "ヒートマップ":
