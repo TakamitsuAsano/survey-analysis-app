@@ -153,14 +153,12 @@ if df is not None:
     with tab2:
         st.subheader("クロス集計と可視化")
         
-        if 'cross_index' not in st.session_state: st.session_state['cross_index'] = 0
-        if 'cross_col' not in st.session_state: st.session_state['cross_col'] = min(1, len(df.columns)-1)
-
         col1, col2 = st.columns(2)
         with col1:
-            index_col = st.selectbox("行（Index）を選択", df.columns, index=st.session_state['cross_index'], key="sb_cross_index")
+            # keyを使ってsession_stateで値を管理
+            index_col = st.selectbox("行（Index）を選択", df.columns, index=0, key="sb_cross_index")
         with col2:
-            columns_col = st.selectbox("列（Column）を選択", df.columns, index=st.session_state['cross_col'], key="sb_cross_col")
+            columns_col = st.selectbox("列（Column）を選択", df.columns, index=min(1, len(df.columns)-1), key="sb_cross_col")
 
         if index_col == columns_col:
             st.warning("⚠️ 行と列には異なる項目を選択してください。")
@@ -188,15 +186,18 @@ if df is not None:
         st.subheader("決定木分析")
         st.caption("💡 図はマウスホイールで**拡大・縮小**、ドラッグで**移動**ができます。")
         
-        if 'tree_target_idx' not in st.session_state: st.session_state['tree_target_idx'] = 0
-        if 'tree_feats_default' not in st.session_state: 
-            st.session_state['tree_feats_default'] = [c for c in df.columns if c != df.columns[0]][:3]
-
         col1, col2 = st.columns(2)
         with col1:
-            target_col_tree = st.selectbox("目的変数（結果）", df.columns, index=st.session_state['tree_target_idx'], key="sb_tree_target")
+            target_col_tree = st.selectbox("目的変数（結果）", df.columns, index=0, key="sb_tree_target")
         with col2:
-            feature_cols_tree = st.multiselect("説明変数（要因）", [c for c in df.columns if c != target_col_tree], default=st.session_state['tree_feats_default'], key="sb_tree_feature")
+            # defaultは初回のみ有効。session_stateに値があればそれが優先される
+            default_feats = [c for c in df.columns if c != df.columns[0]][:3]
+            feature_cols_tree = st.multiselect("説明変数（要因）", [c for c in df.columns if c != target_col_tree], default=default_feats, key="sb_tree_feature")
+
+        # 自動設定された直後であることを通知するエリア
+        if 'ai_msg_tree' in st.session_state and st.session_state['ai_msg_tree']:
+            st.info("✅ AIがおすすめ設定を反映しました。下の「決定木分析を実行」ボタンを押してください。")
+            st.session_state['ai_msg_tree'] = False # 一度表示したら消す
 
         if st.button("決定木分析を実行"):
             if not feature_cols_tree:
@@ -262,15 +263,16 @@ if df is not None:
         * **1.0 より小さい**: その要因が結果を**抑制**します。（例：0.5なら、その要因があると結果が半分しか起こらない）
         """)
 
-        if 'reg_target_idx' not in st.session_state: st.session_state['reg_target_idx'] = 0
-        if 'reg_feats_default' not in st.session_state: 
-            st.session_state['reg_feats_default'] = [c for c in df.columns if c != df.columns[0]][:5]
-
         col1, col2 = st.columns(2)
         with col1:
-            target_col_reg = st.selectbox("目的変数（分析したい結果）", df.columns, index=st.session_state['reg_target_idx'], key="sb_reg_target")
+            target_col_reg = st.selectbox("目的変数（分析したい結果）", df.columns, index=0, key="sb_reg_target")
         with col2:
-            feature_cols_reg = st.multiselect("説明変数（背景・要因と思われる項目）", [c for c in df.columns if c != target_col_reg], default=st.session_state['reg_feats_default'], key="sb_reg_feature")
+            default_feats_reg = [c for c in df.columns if c != df.columns[0]][:5]
+            feature_cols_reg = st.multiselect("説明変数（背景・要因と思われる項目）", [c for c in df.columns if c != target_col_reg], default=default_feats_reg, key="sb_reg_feature")
+
+        if 'ai_msg_reg' in st.session_state and st.session_state['ai_msg_reg']:
+            st.info("✅ AIがおすすめ設定を反映しました。下の「ドライバー分析を実行」ボタンを押してください。")
+            st.session_state['ai_msg_reg'] = False
 
         if st.button("要因分析を実行"):
             if not feature_cols_reg:
@@ -317,17 +319,18 @@ if df is not None:
     with tab5:
         st.subheader("🧩 クラスター分析（セグメンテーション）")
         
-        if 'cluster_feats_default' not in st.session_state: 
-            st.session_state['cluster_feats_default'] = df.columns[:5].tolist()
-
         cluster_features = st.multiselect(
             "クラスター分析に使う変数を選択してください",
             df.columns,
-            default=st.session_state['cluster_feats_default'],
+            default=df.columns[:5].tolist(),
             key="sb_cluster_features"
         )
         
         n_clusters = st.slider("分類するグループ数", 2, 10, 4)
+
+        if 'ai_msg_cluster' in st.session_state and st.session_state['ai_msg_cluster']:
+            st.info("✅ AIがおすすめ設定を反映しました。下の「クラスター分析を実行」ボタンを押してください。")
+            st.session_state['ai_msg_cluster'] = False
 
         if st.button("クラスター分析を実行"):
             if not cluster_features:
@@ -370,10 +373,10 @@ if df is not None:
     # --- タブ6: 解説 ---
     with tab6:
         st.header("📖 統計分析手法の解説ガイド")
-        st.markdown("（詳細は前述の通りです）")
-        st.info("詳しい解説は前回のアップデート内容をご参照ください。")
+        st.markdown("（詳細は省略します。前述の通りです。）")
+        st.info("詳しい解説は「分析手法の解説」タブをご参照ください。")
 
-    # --- タブ7: AI分析アシスト 【新機能】 ---
+    # --- タブ7: AI分析アシスト ---
     with tab7:
         st.header("🤖 AI分析アシスト")
         
@@ -449,7 +452,6 @@ if df is not None:
             if json_match:
                 try:
                     config = json.loads(json_match.group(1))
-                    st.success("✅ AIからの設定データを読み取りました！以下のボタンで適用できます。")
                     
                     col_ai_1, col_ai_2 = st.columns(2)
                     
@@ -461,13 +463,13 @@ if df is not None:
                             st.write(f"**列**: {config['cross_tab']['columns']}")
                             if st.button("設定を適用する (クロス集計)"):
                                 try:
-                                    idx_r = df.columns.get_loc(config['cross_tab']['index'])
-                                    idx_c = df.columns.get_loc(config['cross_tab']['columns'])
-                                    st.session_state['cross_index'] = idx_r
-                                    st.session_state['cross_col'] = idx_c
-                                    st.success("設定を適用しました！「クロス集計」タブを見てください。")
-                                except:
-                                    st.error("列名が見つかりません。CSVが正しいか確認してください。")
+                                    # キーを直接書き換え
+                                    st.session_state["sb_cross_index"] = config['cross_tab']['index']
+                                    st.session_state["sb_cross_col"] = config['cross_tab']['columns']
+                                    st.success("設定を適用しました！「クロス集計」タブを確認してください。")
+                                    st.rerun() # 即座に反映
+                                except Exception as e:
+                                    st.error(f"列名が見つかりません: {e}")
 
                     # --- 2. 決定木設定 ---
                     if "decision_tree" in config:
@@ -477,11 +479,14 @@ if df is not None:
                             st.write(f"**要因**: {', '.join(config['decision_tree']['features'])}")
                             if st.button("設定を適用する (決定木)"):
                                 try:
-                                    idx_t = df.columns.get_loc(config['decision_tree']['target'])
-                                    st.session_state['tree_target_idx'] = idx_t
+                                    # キーを直接書き換え
+                                    st.session_state["sb_tree_target"] = config['decision_tree']['target']
                                     valid_feats = [f for f in config['decision_tree']['features'] if f in df.columns]
-                                    st.session_state['tree_feats_default'] = valid_feats
-                                    st.success("設定を適用しました！「決定木分析」タブを見てください。")
+                                    st.session_state["sb_tree_feature"] = valid_feats
+                                    
+                                    # メッセージフラグを立てる
+                                    st.session_state['ai_msg_tree'] = True
+                                    st.rerun() # 即座に反映
                                 except:
                                     st.error("列名が見つかりません。")
 
@@ -495,11 +500,12 @@ if df is not None:
                             st.write(f"**要因**: {', '.join(config['driver_analysis']['features'])}")
                             if st.button("設定を適用する (ドライバー分析)"):
                                 try:
-                                    idx_t = df.columns.get_loc(config['driver_analysis']['target'])
-                                    st.session_state['reg_target_idx'] = idx_t
+                                    st.session_state["sb_reg_target"] = config['driver_analysis']['target']
                                     valid_feats = [f for f in config['driver_analysis']['features'] if f in df.columns]
-                                    st.session_state['reg_feats_default'] = valid_feats
-                                    st.success("設定を適用しました！「ドライバー分析」タブを見てください。")
+                                    st.session_state["sb_reg_feature"] = valid_feats
+                                    
+                                    st.session_state['ai_msg_reg'] = True
+                                    st.rerun() # 即座に反映
                                 except:
                                     st.error("列名が見つかりません。")
 
@@ -510,8 +516,10 @@ if df is not None:
                             st.write(f"**変数**: {', '.join(config['clustering']['features'])}")
                             if st.button("設定を適用する (クラスター分析)"):
                                 valid_feats = [f for f in config['clustering']['features'] if f in df.columns]
-                                st.session_state['cluster_feats_default'] = valid_feats
-                                st.success("設定を適用しました！「クラスター分析」タブを見てください。")
+                                st.session_state["sb_cluster_features"] = valid_feats
+                                
+                                st.session_state['ai_msg_cluster'] = True
+                                st.rerun() # 即座に反映
 
                 except json.JSONDecodeError:
                     st.error("JSONの形式が正しくありません。")
