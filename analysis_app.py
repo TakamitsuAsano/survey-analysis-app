@@ -93,6 +93,26 @@ def get_decision_tree_data(clf, feature_names, class_names):
     
     return pd.DataFrame(data)
 
+# --- コールバック関数群 (Tab7用) ---
+# エラー回避のため、ボタンが押された瞬間に状態を更新する関数を定義
+def cb_update_cross(idx, col):
+    st.session_state["sb_cross_index"] = idx
+    st.session_state["sb_cross_col"] = col
+
+def cb_update_tree(tgt, feats):
+    st.session_state["sb_tree_target"] = tgt
+    st.session_state["sb_tree_feature"] = feats
+    st.session_state['ai_msg_tree'] = True
+
+def cb_update_reg(tgt, feats):
+    st.session_state["sb_reg_target"] = tgt
+    st.session_state["sb_reg_feature"] = feats
+    st.session_state['ai_msg_reg'] = True
+
+def cb_update_cluster(feats):
+    st.session_state["sb_cluster_features"] = feats
+    st.session_state['ai_msg_cluster'] = True
+
 # ---------------------------------------
 
 st.set_page_config(page_title="アンケート分析 & セグメンテーション", layout="wide")
@@ -153,9 +173,11 @@ if df is not None:
     with tab2:
         st.subheader("クロス集計と可視化")
         
+        # セッション状態のキー "sb_cross_index" 等が自動で作られるため、事前の初期化は必須ではないが、
+        # 値が入っていない場合のエラー防止
         col1, col2 = st.columns(2)
         with col1:
-            # keyを使ってsession_stateで値を管理
+            # key="sb_cross_index" を指定すると、st.session_state["sb_cross_index"] に値が入る
             index_col = st.selectbox("行（Index）を選択", df.columns, index=0, key="sb_cross_index")
         with col2:
             columns_col = st.selectbox("列（Column）を選択", df.columns, index=min(1, len(df.columns)-1), key="sb_cross_col")
@@ -190,14 +212,13 @@ if df is not None:
         with col1:
             target_col_tree = st.selectbox("目的変数（結果）", df.columns, index=0, key="sb_tree_target")
         with col2:
-            # defaultは初回のみ有効。session_stateに値があればそれが優先される
+            # key="sb_tree_feature" を指定。初期値は初回のみ効く
             default_feats = [c for c in df.columns if c != df.columns[0]][:3]
             feature_cols_tree = st.multiselect("説明変数（要因）", [c for c in df.columns if c != target_col_tree], default=default_feats, key="sb_tree_feature")
 
-        # 自動設定された直後であることを通知するエリア
         if 'ai_msg_tree' in st.session_state and st.session_state['ai_msg_tree']:
             st.info("✅ AIがおすすめ設定を反映しました。下の「決定木分析を実行」ボタンを押してください。")
-            st.session_state['ai_msg_tree'] = False # 一度表示したら消す
+            st.session_state['ai_msg_tree'] = False
 
         if st.button("決定木分析を実行"):
             if not feature_cols_tree:
@@ -271,7 +292,7 @@ if df is not None:
             feature_cols_reg = st.multiselect("説明変数（背景・要因と思われる項目）", [c for c in df.columns if c != target_col_reg], default=default_feats_reg, key="sb_reg_feature")
 
         if 'ai_msg_reg' in st.session_state and st.session_state['ai_msg_reg']:
-            st.info("✅ AIがおすすめ設定を反映しました。下の「ドライバー分析を実行」ボタンを押してください。")
+            st.info("✅ AIがおすすめ設定を反映しました。下の「要因分析を実行」ボタンを押してください。")
             st.session_state['ai_msg_reg'] = False
 
         if st.button("要因分析を実行"):
@@ -461,15 +482,13 @@ if df is not None:
                             st.write("### 📈 クロス集計のおすすめ設定")
                             st.write(f"**行**: {config['cross_tab']['index']}")
                             st.write(f"**列**: {config['cross_tab']['columns']}")
-                            if st.button("設定を適用する (クロス集計)"):
-                                try:
-                                    # キーを直接書き換え
-                                    st.session_state["sb_cross_index"] = config['cross_tab']['index']
-                                    st.session_state["sb_cross_col"] = config['cross_tab']['columns']
-                                    st.success("設定を適用しました！「クロス集計」タブを確認してください。")
-                                    st.rerun() # 即座に反映
-                                except Exception as e:
-                                    st.error(f"列名が見つかりません: {e}")
+                            
+                            # on_click コールバックを使用
+                            st.button(
+                                "設定を適用する (クロス集計)",
+                                on_click=cb_update_cross,
+                                args=(config['cross_tab']['index'], config['cross_tab']['columns'])
+                            )
 
                     # --- 2. 決定木設定 ---
                     if "decision_tree" in config:
@@ -477,18 +496,13 @@ if df is not None:
                             st.write("### 🌳 決定木のおすすめ設定")
                             st.write(f"**目的**: {config['decision_tree']['target']}")
                             st.write(f"**要因**: {', '.join(config['decision_tree']['features'])}")
-                            if st.button("設定を適用する (決定木)"):
-                                try:
-                                    # キーを直接書き換え
-                                    st.session_state["sb_tree_target"] = config['decision_tree']['target']
-                                    valid_feats = [f for f in config['decision_tree']['features'] if f in df.columns]
-                                    st.session_state["sb_tree_feature"] = valid_feats
-                                    
-                                    # メッセージフラグを立てる
-                                    st.session_state['ai_msg_tree'] = True
-                                    st.rerun() # 即座に反映
-                                except:
-                                    st.error("列名が見つかりません。")
+                            
+                            valid_feats = [f for f in config['decision_tree']['features'] if f in df.columns]
+                            st.button(
+                                "設定を適用する (決定木)",
+                                on_click=cb_update_tree,
+                                args=(config['decision_tree']['target'], valid_feats)
+                            )
 
                     col_ai_3, col_ai_4 = st.columns(2)
 
@@ -498,28 +512,26 @@ if df is not None:
                             st.write("### 🚀 ドライバー分析のおすすめ設定")
                             st.write(f"**目的**: {config['driver_analysis']['target']}")
                             st.write(f"**要因**: {', '.join(config['driver_analysis']['features'])}")
-                            if st.button("設定を適用する (ドライバー分析)"):
-                                try:
-                                    st.session_state["sb_reg_target"] = config['driver_analysis']['target']
-                                    valid_feats = [f for f in config['driver_analysis']['features'] if f in df.columns]
-                                    st.session_state["sb_reg_feature"] = valid_feats
-                                    
-                                    st.session_state['ai_msg_reg'] = True
-                                    st.rerun() # 即座に反映
-                                except:
-                                    st.error("列名が見つかりません。")
+                            
+                            valid_feats_reg = [f for f in config['driver_analysis']['features'] if f in df.columns]
+                            st.button(
+                                "設定を適用する (ドライバー分析)",
+                                on_click=cb_update_reg,
+                                args=(config['driver_analysis']['target'], valid_feats_reg)
+                            )
 
                     # --- 4. クラスター分析設定 ---
                     if "clustering" in config:
                         with col_ai_4:
                             st.write("### 🧩 クラスター分析のおすすめ設定")
                             st.write(f"**変数**: {', '.join(config['clustering']['features'])}")
-                            if st.button("設定を適用する (クラスター分析)"):
-                                valid_feats = [f for f in config['clustering']['features'] if f in df.columns]
-                                st.session_state["sb_cluster_features"] = valid_feats
-                                
-                                st.session_state['ai_msg_cluster'] = True
-                                st.rerun() # 即座に反映
+                            
+                            valid_feats_cluster = [f for f in config['clustering']['features'] if f in df.columns]
+                            st.button(
+                                "設定を適用する (クラスター分析)",
+                                on_click=cb_update_cluster,
+                                args=(valid_feats_cluster,) # タプルにするためカンマが必要
+                            )
 
                 except json.JSONDecodeError:
                     st.error("JSONの形式が正しくありません。")
