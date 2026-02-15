@@ -3,13 +3,14 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from sklearn.tree import DecisionTreeClassifier, plot_tree, export_text # export_textを追加
+from sklearn.tree import DecisionTreeClassifier, plot_tree, export_text
 from sklearn.linear_model import LogisticRegression
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import os
+import io # 画像保存用に必要
 from streamlit_gsheets import GSheetsConnection
 from st_copy_to_clipboard import st_copy_to_clipboard
 
@@ -134,15 +135,11 @@ if df is not None:
                 df_ml = df_ml[[target_col_tree] + feature_cols_tree].dropna()
                 
                 # 数値化マッピングの保存
-                label_mappings = {}
                 for col in df_ml.columns:
                     if df_ml[col].dtype == 'object':
                         df_ml[col] = df_ml[col].astype(str)
-                        # ラベルエンコーダーで変換する前に元の値を保持
                         le = LabelEncoder()
                         df_ml[col] = le.fit_transform(df_ml[col])
-                        # 数値とラベルの対応関係を保存（後でテキスト表示に使うため）
-                        label_mappings[col] = dict(zip(range(len(le.classes_)), le.classes_))
 
                 X = df_ml[feature_cols_tree]
                 y = df_ml[target_col_tree]
@@ -150,22 +147,28 @@ if df is not None:
                 clf = DecisionTreeClassifier(max_depth=3, random_state=42)
                 clf.fit(X, y)
 
-                # --- 分岐ルールのテキスト生成とコピー ---
+                # --- 分岐ルールのテキスト生成 ---
                 tree_rules = export_text(clf, feature_names=feature_cols_tree)
-                
                 st.write("##### 📋 分岐条件のテキスト詳細")
-                st.caption("ツリー図の内容をテキスト形式で表示します。レポート等への貼り付けにご利用ください。")
-                
-                # クリップボードへのコピーボタン
                 st_copy_to_clipboard(tree_rules, "📋 分岐ルールをコピー", "✅ コピーしました")
-                
-                # テキスト表示エリア
                 st.code(tree_rules)
-                # ------------------------------------------
 
+                # --- 決定木の描画 ---
                 fig, ax = plt.subplots(figsize=(14, 7))
                 plot_tree(clf, feature_names=feature_cols_tree, class_names=True, filled=True, ax=ax, fontsize=12)
                 st.pyplot(fig)
+                
+                # --- 画像ダウンロードボタン (追加機能) ---
+                buf = io.BytesIO()
+                fig.savefig(buf, format="png", bbox_inches="tight", dpi=300)
+                buf.seek(0)
+                st.download_button(
+                    label="📥 決定木画像をダウンロード (高画質PNG)",
+                    data=buf,
+                    file_name="decision_tree.png",
+                    mime="image/png"
+                )
+                # -------------------------------------
 
     # --- タブ4: 要因(ドライバー)分析 ---
     with tab4:
