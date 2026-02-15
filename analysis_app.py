@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from sklearn.tree import DecisionTreeClassifier, plot_tree
+from sklearn.tree import DecisionTreeClassifier, plot_tree, export_text # export_textを追加
 from sklearn.linear_model import LogisticRegression
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import LabelEncoder, StandardScaler
@@ -133,15 +133,35 @@ if df is not None:
                 le = LabelEncoder()
                 df_ml = df_ml[[target_col_tree] + feature_cols_tree].dropna()
                 
+                # 数値化マッピングの保存
+                label_mappings = {}
                 for col in df_ml.columns:
-                    df_ml[col] = df_ml[col].astype(str)
-                    df_ml[col] = le.fit_transform(df_ml[col])
+                    if df_ml[col].dtype == 'object':
+                        df_ml[col] = df_ml[col].astype(str)
+                        # ラベルエンコーダーで変換する前に元の値を保持
+                        le = LabelEncoder()
+                        df_ml[col] = le.fit_transform(df_ml[col])
+                        # 数値とラベルの対応関係を保存（後でテキスト表示に使うため）
+                        label_mappings[col] = dict(zip(range(len(le.classes_)), le.classes_))
 
                 X = df_ml[feature_cols_tree]
                 y = df_ml[target_col_tree]
 
                 clf = DecisionTreeClassifier(max_depth=3, random_state=42)
                 clf.fit(X, y)
+
+                # --- 分岐ルールのテキスト生成とコピー ---
+                tree_rules = export_text(clf, feature_names=feature_cols_tree)
+                
+                st.write("##### 📋 分岐条件のテキスト詳細")
+                st.caption("ツリー図の内容をテキスト形式で表示します。レポート等への貼り付けにご利用ください。")
+                
+                # クリップボードへのコピーボタン
+                st_copy_to_clipboard(tree_rules, "📋 分岐ルールをコピー", "✅ コピーしました")
+                
+                # テキスト表示エリア
+                st.code(tree_rules)
+                # ------------------------------------------
 
                 fig, ax = plt.subplots(figsize=(14, 7))
                 plot_tree(clf, feature_names=feature_cols_tree, class_names=True, filled=True, ax=ax, fontsize=12)
