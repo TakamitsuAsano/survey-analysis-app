@@ -112,6 +112,32 @@ def cb_update_cluster(feats):
     st.session_state["sb_cluster_features"] = feats
     st.session_state['ai_msg_cluster'] = True
 
+# --- 選択肢の並び順を強制する関数 ---
+def enforce_likert_order(df, col_name):
+    # 一般的なアンケートの並び順定義（上にあるものほど左/上に表示される）
+    likert_order_master = [
+        "非常にそう思う", "強くそう思う", "とてもそう思う", "そう思う", "かなりそう思う",
+        "ややそう思う", "どちらかといえばそう思う", "どちらかと言えばそう思う",
+        "どちらともいえない", "どちらとも言えない", "普通",
+        "どちらかといえばそう思わない", "どちらかと言えばそう思わない", "あまりそう思わない",
+        "そう思わない", "全くそう思わない", "全く思わない"
+    ]
+    
+    # データに含まれる値だけを抽出して、マスターの順番通りに並べる
+    unique_vals = df[col_name].unique()
+    # マスタにある値だけを順番通りに取り出す
+    sorter = [x for x in likert_order_master if x in unique_vals]
+    
+    # マスタにない値（例: 「その他」や「無回答」）があれば末尾に追加
+    remaining = [x for x in unique_vals if x not in sorter]
+    final_order = sorter + sorted(remaining) # 残りは文字順
+    
+    # 2つ以上マッチした場合のみ並び替え適用（数値データなどを壊さないため）
+    if len(sorter) >= 2:
+        return pd.Categorical(df[col_name], categories=final_order, ordered=True)
+    else:
+        return df[col_name]
+
 # ---------------------------------------
 
 st.set_page_config(page_title="アンケート分析 & セグメンテーション", layout="wide")
@@ -181,7 +207,16 @@ if df is not None:
         if index_col == columns_col:
             st.warning("⚠️ 行と列には異なる項目を選択してください。")
         else:
-            cross_tab = pd.crosstab(df[index_col], df[columns_col])
+            # --- ここで並び順を強制適用 ---
+            # データフレームのコピーを作成して操作（元のdfに影響を与えないため）
+            df_cross = df.copy()
+            
+            # 行と列の両方に対して、もしLikert尺度なら並び替えを適用
+            df_cross[index_col] = enforce_likert_order(df_cross, index_col)
+            df_cross[columns_col] = enforce_likert_order(df_cross, columns_col)
+            # ---------------------------
+
+            cross_tab = pd.crosstab(df_cross[index_col], df_cross[columns_col])
             st.write("##### 集計表")
             
             copy_text = cross_tab.to_csv(sep='\t')
@@ -400,7 +435,6 @@ if df is not None:
         st.subheader("Step 1: プロンプトをコピー")
         st.markdown("以下のプロンプトをコピーして、GeminiやChatGPTに**CSVファイルを添付**した状態で送信してください。")
 
-        # プロンプト内のJSON指示を「リスト形式」に変更
         ai_prompt_text = """# 依頼
 添付のアンケートデータを分析し、マーケティング戦略立案のための詳細なレポートを作成してください。
 以下の4つの分析手法を用いて、トップライン（全体傾向）だけでなく、顕著な特徴や興味深い相関を可能な限り網羅的に抽出してください。
