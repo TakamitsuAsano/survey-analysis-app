@@ -10,7 +10,8 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import os
-import graphviz # Graphviz用に追加
+import io
+import graphviz
 from streamlit_gsheets import GSheetsConnection
 from st_copy_to_clipboard import st_copy_to_clipboard
 
@@ -30,6 +31,68 @@ def setup_japanese_font():
             pass
 
 setup_japanese_font()
+
+# --- 決定木データをDataFrameに変換する関数 ---
+def get_decision_tree_data(clf, feature_names, class_names):
+    n_nodes = clf.tree_.node_count
+    children_left = clf.tree_.children_left
+    children_right = clf.tree_.children_right
+    feature = clf.tree_.feature
+    threshold = clf.tree_.threshold
+    impurity = clf.tree_.impurity
+    n_node_samples = clf.tree_.n_node_samples
+    value = clf.tree_.value
+
+    node_depth = np.zeros(shape=n_nodes, dtype=np.int64)
+    is_leaves = np.zeros(shape=n_nodes, dtype=bool)
+    stack = [(0, 0)]
+    
+    while len(stack) > 0:
+        node_id, depth = stack.pop()
+        node_depth[node_id] = depth
+        is_split_node = children_left[node_id] != children_right[node_id]
+        if is_split_node:
+            stack.append((children_left[node_id], depth + 1))
+            stack.append((children_right[node_id], depth + 1))
+        else:
+            is_leaves[node_id] = True
+
+    data = []
+    for i in range(n_nodes):
+        node_type = "Leaf" if is_leaves[i] else "Node"
+        if i == 0: node_type = "Root"
+        
+        # 特徴量名と閾値
+        if feature[i] != -2: # -2 denotes undefined feature
+            feat_name = feature_names[feature[i]]
+            th = threshold[i]
+            condition = f"{feat_name} <= {th:.3f}"
+        else:
+            feat_name = None
+            th = None
+            condition = None
+        
+        # Value (クラスごとのサンプル数)
+        val = value[i][0]
+        # 予測クラス
+        class_idx = np.argmax(val)
+        pred_class = class_names[class_idx] if class_names is not None else str(class_idx)
+        
+        row = {
+            "Node_ID": i,
+            "Depth": node_depth[i],
+            "Type": node_type,
+            "Condition": condition,
+            "Feature": feat_name,
+            "Threshold": th,
+            "Gini": f"{impurity[i]:.4f}",
+            "Samples": n_node_samples[i],
+            "Value": str(list(map(int, val))), # [10, 50] のような形式に
+            "Predicted_Class": pred_class
+        }
+        data.append(row)
+    
+    return pd.DataFrame(data)
 # ---------------------------------------
 
 st.set_page_config(page_title="アンケート分析 & セグメンテーション", layout="wide")
@@ -116,7 +179,7 @@ if df is not None:
                 fig = px.bar(cross_tab_reset, x=index_col, y=val_name, color=columns_col, title=f"{index_col} × {columns_col}")
             st.plotly_chart(fig, use_container_width=True)
 
-    # --- タブ3: 決定木分析 (Graphviz版) ---
+    # --- タブ3: 決定木分析 (Graphviz版 + CSV DL) ---
     with tab3:
         st.subheader("決定木分析")
         st.caption("💡 図はマウスホイールで**拡大・縮小**、ドラッグで**移動**ができます。")
@@ -135,7 +198,6 @@ if df is not None:
                     df_ml = df.copy()
                     
                     # 数値化マッピング
-                    label_mappings = {}
                     class_names_list = None
                     
                     # 目的変数の処理
@@ -168,8 +230,7 @@ if df is not None:
                     st_copy_to_clipboard(tree_rules, "📋 分岐ルールをコピー", "✅ コピーしました")
                     st.code(tree_rules)
 
-                    # --- Graphvizによる描画 (ここを変更) ---
-                    # 日本語フォントを指定してDOTデータを生成
+                    # --- Graphvizによる描画 ---
                     dot_data = export_graphviz(
                         clf,
                         out_file=None,
@@ -178,26 +239,38 @@ if df is not None:
                         filled=True,
                         rounded=True,
                         special_characters=True,
-                        fontname="IPAexGothic" # 日本語フォント指定
+                        fontname="IPAexGothic"
                     )
-                    
                     st.graphviz_chart(dot_data)
                     
-                    # --- 画像ダウンロードボタン ---
-                    # Graphvizを使ってPNGデータをメモリ上で生成
+                    # 画像ダウンロードボタン
                     try:
                         graph = graphviz.Source(dot_data)
-                        # png形式のバイナリを取得
                         png_bytes = graph.pipe(format='png')
-                        
                         st.download_button(
-                            label="📥 決定木画像をダウンロード (高画質PNG)",
+                            label="📥 決定木画像をダウンロード (PNG)",
                             data=png_bytes,
                             file_name="decision_tree.png",
                             mime="image/png"
                         )
                     except Exception as e:
-                        st.warning(f"画像ダウンロード準備中にエラー: {e} (表示には影響ありません)")
+                        st.warning(f"画像DLエラー: {e}")
+
+                    # --- [追加機能] 決定木データ(CSV)ダウンロード ---
+                    st.divider()
+                    st.write("##### 📊 決定木データのダウンロード")
+                    st.caption("各ノードの詳細データ（Gini, Samples, Value, 閾値など）をCSVで取得します。")
+                    
+                    tree_df = get_decision_tree_data(clf, feature_cols_tree, class_names_list)
+                    csv_tree = tree_df.to_csv(index=False).encode('utf-8_sig')
+                    
+                    st.download_button(
+                        label="📥 決定木データをCSVでダウンロード",
+                        data=csv_tree,
+                        file_name="decision_tree_data.csv",
+                        mime="text/csv"
+                    )
+                    # ---------------------------------------------
 
                 except Exception as e:
                     st.error(f"分析エラー: {e}")
