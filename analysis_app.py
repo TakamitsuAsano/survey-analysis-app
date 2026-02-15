@@ -3,14 +3,14 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from sklearn.tree import DecisionTreeClassifier, plot_tree, export_text
+from sklearn.tree import DecisionTreeClassifier, export_text, export_graphviz
 from sklearn.linear_model import LogisticRegression
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import os
-import io # 画像保存用に必要
+import graphviz # Graphviz用に追加
 from streamlit_gsheets import GSheetsConnection
 from st_copy_to_clipboard import st_copy_to_clipboard
 
@@ -116,9 +116,10 @@ if df is not None:
                 fig = px.bar(cross_tab_reset, x=index_col, y=val_name, color=columns_col, title=f"{index_col} × {columns_col}")
             st.plotly_chart(fig, use_container_width=True)
 
-    # --- タブ3: 決定木分析 ---
+    # --- タブ3: 決定木分析 (Graphviz版) ---
     with tab3:
         st.subheader("決定木分析")
+        st.caption("💡 図はマウスホイールで**拡大・縮小**、ドラッグで**移動**ができます。")
         
         col1, col2 = st.columns(2)
         with col1:
@@ -130,45 +131,76 @@ if df is not None:
             if not feature_cols_tree:
                 st.warning("説明変数を1つ以上選択してください。")
             else:
-                df_ml = df.copy()
-                le = LabelEncoder()
-                df_ml = df_ml[[target_col_tree] + feature_cols_tree].dropna()
-                
-                # 数値化マッピングの保存
-                for col in df_ml.columns:
-                    if df_ml[col].dtype == 'object':
-                        df_ml[col] = df_ml[col].astype(str)
-                        le = LabelEncoder()
-                        df_ml[col] = le.fit_transform(df_ml[col])
+                try:
+                    df_ml = df.copy()
+                    
+                    # 数値化マッピング
+                    label_mappings = {}
+                    class_names_list = None
+                    
+                    # 目的変数の処理
+                    if df_ml[target_col_tree].dtype == 'object':
+                        le_target = LabelEncoder()
+                        df_ml[target_col_tree] = df_ml[target_col_tree].astype(str)
+                        df_ml[target_col_tree] = le_target.fit_transform(df_ml[target_col_tree])
+                        class_names_list = le_target.classes_.astype(str).tolist()
+                    else:
+                        class_names_list = sorted(df_ml[target_col_tree].unique().astype(str).tolist())
 
-                X = df_ml[feature_cols_tree]
-                y = df_ml[target_col_tree]
+                    # 説明変数の処理
+                    for col in feature_cols_tree:
+                        if df_ml[col].dtype == 'object':
+                            df_ml[col] = df_ml[col].astype(str)
+                            le = LabelEncoder()
+                            df_ml[col] = le.fit_transform(df_ml[col])
 
-                clf = DecisionTreeClassifier(max_depth=3, random_state=42)
-                clf.fit(X, y)
+                    df_ml = df_ml.dropna(subset=[target_col_tree] + feature_cols_tree)
+                    
+                    X = df_ml[feature_cols_tree]
+                    y = df_ml[target_col_tree]
 
-                # --- 分岐ルールのテキスト生成 ---
-                tree_rules = export_text(clf, feature_names=feature_cols_tree)
-                st.write("##### 📋 分岐条件のテキスト詳細")
-                st_copy_to_clipboard(tree_rules, "📋 分岐ルールをコピー", "✅ コピーしました")
-                st.code(tree_rules)
+                    clf = DecisionTreeClassifier(max_depth=3, random_state=42)
+                    clf.fit(X, y)
 
-                # --- 決定木の描画 ---
-                fig, ax = plt.subplots(figsize=(14, 7))
-                plot_tree(clf, feature_names=feature_cols_tree, class_names=True, filled=True, ax=ax, fontsize=12)
-                st.pyplot(fig)
-                
-                # --- 画像ダウンロードボタン (追加機能) ---
-                buf = io.BytesIO()
-                fig.savefig(buf, format="png", bbox_inches="tight", dpi=300)
-                buf.seek(0)
-                st.download_button(
-                    label="📥 決定木画像をダウンロード (高画質PNG)",
-                    data=buf,
-                    file_name="decision_tree.png",
-                    mime="image/png"
-                )
-                # -------------------------------------
+                    # --- 分岐ルールのテキスト生成 ---
+                    tree_rules = export_text(clf, feature_names=feature_cols_tree)
+                    st.write("##### 📋 分岐条件のテキスト詳細")
+                    st_copy_to_clipboard(tree_rules, "📋 分岐ルールをコピー", "✅ コピーしました")
+                    st.code(tree_rules)
+
+                    # --- Graphvizによる描画 (ここを変更) ---
+                    # 日本語フォントを指定してDOTデータを生成
+                    dot_data = export_graphviz(
+                        clf,
+                        out_file=None,
+                        feature_names=feature_cols_tree,
+                        class_names=class_names_list,
+                        filled=True,
+                        rounded=True,
+                        special_characters=True,
+                        fontname="IPAexGothic" # 日本語フォント指定
+                    )
+                    
+                    st.graphviz_chart(dot_data)
+                    
+                    # --- 画像ダウンロードボタン ---
+                    # Graphvizを使ってPNGデータをメモリ上で生成
+                    try:
+                        graph = graphviz.Source(dot_data)
+                        # png形式のバイナリを取得
+                        png_bytes = graph.pipe(format='png')
+                        
+                        st.download_button(
+                            label="📥 決定木画像をダウンロード (高画質PNG)",
+                            data=png_bytes,
+                            file_name="decision_tree.png",
+                            mime="image/png"
+                        )
+                    except Exception as e:
+                        st.warning(f"画像ダウンロード準備中にエラー: {e} (表示には影響ありません)")
+
+                except Exception as e:
+                    st.error(f"分析エラー: {e}")
 
     # --- タブ4: 要因(ドライバー)分析 ---
     with tab4:
