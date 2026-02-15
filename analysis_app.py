@@ -94,7 +94,6 @@ def get_decision_tree_data(clf, feature_names, class_names):
     return pd.DataFrame(data)
 
 # --- コールバック関数群 (Tab7用) ---
-# エラー回避のため、ボタンが押された瞬間に状態を更新する関数を定義
 def cb_update_cross(idx, col):
     st.session_state["sb_cross_index"] = idx
     st.session_state["sb_cross_col"] = col
@@ -173,11 +172,8 @@ if df is not None:
     with tab2:
         st.subheader("クロス集計と可視化")
         
-        # セッション状態のキー "sb_cross_index" 等が自動で作られるため、事前の初期化は必須ではないが、
-        # 値が入っていない場合のエラー防止
         col1, col2 = st.columns(2)
         with col1:
-            # key="sb_cross_index" を指定すると、st.session_state["sb_cross_index"] に値が入る
             index_col = st.selectbox("行（Index）を選択", df.columns, index=0, key="sb_cross_index")
         with col2:
             columns_col = st.selectbox("列（Column）を選択", df.columns, index=min(1, len(df.columns)-1), key="sb_cross_col")
@@ -212,7 +208,6 @@ if df is not None:
         with col1:
             target_col_tree = st.selectbox("目的変数（結果）", df.columns, index=0, key="sb_tree_target")
         with col2:
-            # key="sb_tree_feature" を指定。初期値は初回のみ効く
             default_feats = [c for c in df.columns if c != df.columns[0]][:3]
             feature_cols_tree = st.multiselect("説明変数（要因）", [c for c in df.columns if c != target_col_tree], default=default_feats, key="sb_tree_feature")
 
@@ -394,7 +389,7 @@ if df is not None:
     # --- タブ6: 解説 ---
     with tab6:
         st.header("📖 統計分析手法の解説ガイド")
-        st.markdown("（詳細は省略します。前述の通りです。）")
+        st.markdown("（詳細は省略します。）")
         st.info("詳しい解説は「分析手法の解説」タブをご参照ください。")
 
     # --- タブ7: AI分析アシスト ---
@@ -405,6 +400,7 @@ if df is not None:
         st.subheader("Step 1: プロンプトをコピー")
         st.markdown("以下のプロンプトをコピーして、GeminiやChatGPTに**CSVファイルを添付**した状態で送信してください。")
 
+        # プロンプト内のJSON指示を「リスト形式」に変更
         ai_prompt_text = """# 依頼
 添付のアンケートデータを分析し、マーケティング戦略立案のための詳細なレポートを作成してください。
 以下の4つの分析手法を用いて、トップライン（全体傾向）だけでなく、顕著な特徴や興味深い相関を可能な限り網羅的に抽出してください。
@@ -432,27 +428,31 @@ if df is not None:
    - マーケティングの専門家が読むレベルの洞察を含めてください。
 
 2. **アプリ連携用設定データ（JSON形式）**
-   - **最後に必ず**、以下のJSON形式で、各分析に使用した（または使用を推奨する）「目的変数」と「説明変数」の具体的な列名を抽出してください。
+   - **最後に必ず**、以下のJSON形式で、各分析ごとに**「おすすめの設定パターン」を3つ以上（リスト形式で）** 抽出してください。
    - **列名は、CSVのヘッダーにある正確な名称を使用してください。**
 
 ```json
 {
-  "cross_tab": {
-    "index": "ここに行（Index）にすべき列名を入れる",
-    "columns": "ここに列（Column）にすべき列名を入れる"
-  },
-  "decision_tree": {
-    "target": "ここに目的変数（結果）の列名を入れる",
-    "features": ["説明変数1", "説明変数2", "説明変数3", "説明変数4"]
-  },
-  "driver_analysis": {
-    "target": "ここに目的変数（結果）の列名を入れる",
-    "features": ["説明変数1", "説明変数2", "説明変数3", "説明変数4", "説明変数5"]
-  },
-  "clustering": {
-    "features": ["クラスター分析に使用した変数1", "変数2", "変数3", "変数4", "変数5"],
-    "n_clusters": 4
-  }
+  "cross_tab": [
+    {"index": "列名A", "columns": "列名B"},
+    {"index": "列名C", "columns": "列名D"},
+    {"index": "列名E", "columns": "列名F"}
+  ],
+  "decision_tree": [
+    {"target": "目的変数A", "features": ["説明変数1", "説明変数2", "説明変数3"]},
+    {"target": "目的変数B", "features": ["説明変数1", "説明変数4", "説明変数5"]},
+    {"target": "目的変数C", "features": ["説明変数2", "説明変数6"]}
+  ],
+  "driver_analysis": [
+    {"target": "目的変数A", "features": ["説明変数1", "説明変数2", "説明変数3"]},
+    {"target": "目的変数B", "features": ["説明変数1", "説明変数4", "説明変数5"]},
+    {"target": "目的変数C", "features": ["説明変数2", "説明変数6"]}
+  ],
+  "clustering": [
+    {"features": ["変数1", "変数2", "変数3"], "n_clusters": 4},
+    {"features": ["変数1", "変数4", "変数5"], "n_clusters": 3},
+    {"features": ["変数2", "変数3", "変数6"], "n_clusters": 5}
+  ]
 }
 ```"""
         st_copy_to_clipboard(ai_prompt_text, "📋 プロンプトをコピー", "✅ コピーしました！")
@@ -474,64 +474,81 @@ if df is not None:
                 try:
                     config = json.loads(json_match.group(1))
                     
+                    st.success("✅ AIからの設定データを読み取りました！以下のおすすめパターンから選択してください。")
+                    
                     col_ai_1, col_ai_2 = st.columns(2)
                     
-                    # --- 1. クロス集計設定 ---
-                    if "cross_tab" in config:
+                    # --- 1. クロス集計設定 (ループ処理) ---
+                    if "cross_tab" in config and isinstance(config['cross_tab'], list):
                         with col_ai_1:
-                            st.write("### 📈 クロス集計のおすすめ設定")
-                            st.write(f"**行**: {config['cross_tab']['index']}")
-                            st.write(f"**列**: {config['cross_tab']['columns']}")
-                            
-                            # on_click コールバックを使用
-                            st.button(
-                                "設定を適用する (クロス集計)",
-                                on_click=cb_update_cross,
-                                args=(config['cross_tab']['index'], config['cross_tab']['columns'])
-                            )
+                            st.write("### 📈 クロス集計のおすすめ")
+                            for i, setting in enumerate(config['cross_tab']):
+                                with st.expander(f"パターン {i+1}: {setting.get('index')} × {setting.get('columns')}", expanded=True):
+                                    st.write(f"**行**: {setting.get('index')}")
+                                    st.write(f"**列**: {setting.get('columns')}")
+                                    st.button(
+                                        f"パターン{i+1}を適用",
+                                        key=f"btn_cross_{i}",
+                                        on_click=cb_update_cross,
+                                        args=(setting.get('index'), setting.get('columns'))
+                                    )
 
-                    # --- 2. 決定木設定 ---
-                    if "decision_tree" in config:
+                    # --- 2. 決定木設定 (ループ処理) ---
+                    if "decision_tree" in config and isinstance(config['decision_tree'], list):
                         with col_ai_2:
-                            st.write("### 🌳 決定木のおすすめ設定")
-                            st.write(f"**目的**: {config['decision_tree']['target']}")
-                            st.write(f"**要因**: {', '.join(config['decision_tree']['features'])}")
-                            
-                            valid_feats = [f for f in config['decision_tree']['features'] if f in df.columns]
-                            st.button(
-                                "設定を適用する (決定木)",
-                                on_click=cb_update_tree,
-                                args=(config['decision_tree']['target'], valid_feats)
-                            )
+                            st.write("### 🌳 決定木のおすすめ")
+                            for i, setting in enumerate(config['decision_tree']):
+                                tgt = setting.get('target')
+                                feats = setting.get('features', [])
+                                with st.expander(f"パターン {i+1}: {tgt}", expanded=True):
+                                    st.write(f"**目的**: {tgt}")
+                                    st.caption(f"**要因**: {', '.join(feats)}")
+                                    
+                                    valid_feats = [f for f in feats if f in df.columns]
+                                    st.button(
+                                        f"パターン{i+1}を適用",
+                                        key=f"btn_tree_{i}",
+                                        on_click=cb_update_tree,
+                                        args=(tgt, valid_feats)
+                                    )
 
                     col_ai_3, col_ai_4 = st.columns(2)
 
-                    # --- 3. ドライバー分析設定 ---
-                    if "driver_analysis" in config:
+                    # --- 3. ドライバー分析設定 (ループ処理) ---
+                    if "driver_analysis" in config and isinstance(config['driver_analysis'], list):
                         with col_ai_3:
-                            st.write("### 🚀 ドライバー分析のおすすめ設定")
-                            st.write(f"**目的**: {config['driver_analysis']['target']}")
-                            st.write(f"**要因**: {', '.join(config['driver_analysis']['features'])}")
-                            
-                            valid_feats_reg = [f for f in config['driver_analysis']['features'] if f in df.columns]
-                            st.button(
-                                "設定を適用する (ドライバー分析)",
-                                on_click=cb_update_reg,
-                                args=(config['driver_analysis']['target'], valid_feats_reg)
-                            )
+                            st.write("### 🚀 ドライバー分析のおすすめ")
+                            for i, setting in enumerate(config['driver_analysis']):
+                                tgt = setting.get('target')
+                                feats = setting.get('features', [])
+                                with st.expander(f"パターン {i+1}: {tgt}", expanded=True):
+                                    st.write(f"**目的**: {tgt}")
+                                    st.caption(f"**要因**: {', '.join(feats)}")
+                                    
+                                    valid_feats_reg = [f for f in feats if f in df.columns]
+                                    st.button(
+                                        f"パターン{i+1}を適用",
+                                        key=f"btn_reg_{i}",
+                                        on_click=cb_update_reg,
+                                        args=(tgt, valid_feats_reg)
+                                    )
 
-                    # --- 4. クラスター分析設定 ---
-                    if "clustering" in config:
+                    # --- 4. クラスター分析設定 (ループ処理) ---
+                    if "clustering" in config and isinstance(config['clustering'], list):
                         with col_ai_4:
-                            st.write("### 🧩 クラスター分析のおすすめ設定")
-                            st.write(f"**変数**: {', '.join(config['clustering']['features'])}")
-                            
-                            valid_feats_cluster = [f for f in config['clustering']['features'] if f in df.columns]
-                            st.button(
-                                "設定を適用する (クラスター分析)",
-                                on_click=cb_update_cluster,
-                                args=(valid_feats_cluster,) # タプルにするためカンマが必要
-                            )
+                            st.write("### 🧩 クラスター分析のおすすめ")
+                            for i, setting in enumerate(config['clustering']):
+                                feats = setting.get('features', [])
+                                with st.expander(f"パターン {i+1}: {len(feats)}変数で分類", expanded=True):
+                                    st.caption(f"**変数**: {', '.join(feats)}")
+                                    
+                                    valid_feats_cluster = [f for f in feats if f in df.columns]
+                                    st.button(
+                                        f"パターン{i+1}を適用",
+                                        key=f"btn_cluster_{i}",
+                                        on_click=cb_update_cluster,
+                                        args=(valid_feats_cluster,)
+                                    )
 
                 except json.JSONDecodeError:
                     st.error("JSONの形式が正しくありません。")
