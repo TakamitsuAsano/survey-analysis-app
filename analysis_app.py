@@ -112,9 +112,8 @@ def cb_update_cluster(feats):
     st.session_state["sb_cluster_features"] = feats
     st.session_state['ai_msg_cluster'] = True
 
-# --- 選択肢の並び順を強制する関数（修正版） ---
+# --- 選択肢の並び順を強制する関数 ---
 def enforce_likert_order(df, col_name):
-    # 一般的なアンケートの並び順定義
     likert_order_master = [
         "非常にそう思う", "強くそう思う", "とてもそう思う", "そう思う", "かなりそう思う",
         "ややそう思う", "どちらかといえばそう思う", "どちらかと言えばそう思う",
@@ -122,22 +121,12 @@ def enforce_likert_order(df, col_name):
         "どちらかといえばそう思わない", "どちらかと言えばそう思わない", "あまりそう思わない",
         "そう思わない", "全くそう思わない", "全く思わない"
     ]
-    
-    # 欠損値を除いたユニーク値を取得
     unique_vals = df[col_name].dropna().unique()
-    
-    # マスタにある値だけを順番通りに取り出す
     sorter = [x for x in likert_order_master if x in unique_vals]
-    
-    # マスタにない値（例: 「その他」や「無回答」）があれば末尾に追加
     remaining = [x for x in unique_vals if x not in sorter]
-    
-    # 【修正】型混在エラーを防ぐため、文字列に変換してソートする
     sorted_remaining = sorted(remaining, key=lambda x: str(x))
-    
     final_order = sorter + sorted_remaining
     
-    # 2つ以上マッチした場合のみ並び替え適用
     if len(sorter) >= 2:
         return pd.Categorical(df[col_name], categories=final_order, ordered=True)
     else:
@@ -212,7 +201,6 @@ if df is not None:
         if index_col == columns_col:
             st.warning("⚠️ 行と列には異なる項目を選択してください。")
         else:
-            # 並び順強制処理
             df_cross = df.copy()
             df_cross[index_col] = enforce_likert_order(df_cross, index_col)
             df_cross[columns_col] = enforce_likert_order(df_cross, columns_col)
@@ -244,8 +232,28 @@ if df is not None:
         with col1:
             target_col_tree = st.selectbox("目的変数（結果）", df.columns, index=0, key="sb_tree_target")
         with col2:
+            # --- 【修正点】Multiselectのエラー回避処理 ---
+            # 目的変数以外の全てのカラム
+            valid_options = [c for c in df.columns if c != target_col_tree]
+            
+            # session_stateに保存されている「選択中の変数」の中に、目的変数が混ざっていないかチェック
+            if "sb_tree_feature" in st.session_state:
+                current_selection = st.session_state["sb_tree_feature"]
+                # 有効なオプションに含まれるものだけを残す（クリーニング）
+                safe_selection = [x for x in current_selection if x in valid_options]
+                st.session_state["sb_tree_feature"] = safe_selection
+
+            # default値も念のためクリーニング
             default_feats = [c for c in df.columns if c != df.columns[0]][:3]
-            feature_cols_tree = st.multiselect("説明変数（要因）", [c for c in df.columns if c != target_col_tree], default=default_feats, key="sb_tree_feature")
+            safe_default = [x for x in default_feats if x in valid_options]
+
+            feature_cols_tree = st.multiselect(
+                "説明変数（要因）", 
+                valid_options, 
+                default=safe_default, 
+                key="sb_tree_feature"
+            )
+            # ---------------------------------------------
 
         if 'ai_msg_tree' in st.session_state and st.session_state['ai_msg_tree']:
             st.info("✅ AIがおすすめ設定を反映しました。下の「決定木分析を実行」ボタンを押してください。")
@@ -319,8 +327,24 @@ if df is not None:
         with col1:
             target_col_reg = st.selectbox("目的変数（分析したい結果）", df.columns, index=0, key="sb_reg_target")
         with col2:
+            # --- 【修正点】Multiselectのエラー回避処理 ---
+            valid_options_reg = [c for c in df.columns if c != target_col_reg]
+            
+            if "sb_reg_feature" in st.session_state:
+                current_selection = st.session_state["sb_reg_feature"]
+                safe_selection = [x for x in current_selection if x in valid_options_reg]
+                st.session_state["sb_reg_feature"] = safe_selection
+
             default_feats_reg = [c for c in df.columns if c != df.columns[0]][:5]
-            feature_cols_reg = st.multiselect("説明変数（背景・要因と思われる項目）", [c for c in df.columns if c != target_col_reg], default=default_feats_reg, key="sb_reg_feature")
+            safe_default_reg = [x for x in default_feats_reg if x in valid_options_reg]
+
+            feature_cols_reg = st.multiselect(
+                "説明変数（背景・要因と思われる項目）", 
+                valid_options_reg, 
+                default=safe_default_reg, 
+                key="sb_reg_feature"
+            )
+            # ---------------------------------------------
 
         if 'ai_msg_reg' in st.session_state and st.session_state['ai_msg_reg']:
             st.info("✅ AIがおすすめ設定を反映しました。下の「要因分析を実行」ボタンを押してください。")
@@ -436,7 +460,6 @@ if df is not None:
         st.subheader("Step 1: プロンプトをコピー")
         st.markdown("以下のプロンプトをコピーして、GeminiやChatGPTに**CSVファイルを添付**した状態で送信してください。")
 
-        # プロンプト内のJSON指示を「リスト形式」に変更
         ai_prompt_text = """# 依頼
 添付のアンケートデータを分析し、マーケティング戦略立案のための詳細なレポートを作成してください。
 以下の4つの分析手法を用いて、トップライン（全体傾向）だけでなく、顕著な特徴や興味深い相関を可能な限り網羅的に抽出してください。
