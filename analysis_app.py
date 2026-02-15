@@ -12,6 +12,8 @@ import matplotlib.font_manager as fm
 import os
 import io
 import graphviz
+import json
+import re
 from streamlit_gsheets import GSheetsConnection
 from st_copy_to_clipboard import st_copy_to_clipboard
 
@@ -35,13 +37,13 @@ setup_japanese_font()
 # --- 決定木データをDataFrameに変換する関数 ---
 def get_decision_tree_data(clf, feature_names, class_names):
     n_nodes = clf.tree_.node_count
-    children_left = clf.tree_.children_left
-    children_right = clf.tree_.children_right
     feature = clf.tree_.feature
     threshold = clf.tree_.threshold
     impurity = clf.tree_.impurity
     n_node_samples = clf.tree_.n_node_samples
     value = clf.tree_.value
+    children_left = clf.tree_.children_left
+    children_right = clf.tree_.children_right
 
     node_depth = np.zeros(shape=n_nodes, dtype=np.int64)
     is_leaves = np.zeros(shape=n_nodes, dtype=bool)
@@ -62,8 +64,7 @@ def get_decision_tree_data(clf, feature_names, class_names):
         node_type = "Leaf" if is_leaves[i] else "Node"
         if i == 0: node_type = "Root"
         
-        # 特徴量名と閾値
-        if feature[i] != -2: # -2 denotes undefined feature
+        if feature[i] != -2:
             feat_name = feature_names[feature[i]]
             th = threshold[i]
             condition = f"{feat_name} <= {th:.3f}"
@@ -72,9 +73,7 @@ def get_decision_tree_data(clf, feature_names, class_names):
             th = None
             condition = None
         
-        # Value (クラスごとのサンプル数)
         val = value[i][0]
-        # 予測クラス
         class_idx = np.argmax(val)
         pred_class = class_names[class_idx] if class_names is not None else str(class_idx)
         
@@ -87,12 +86,13 @@ def get_decision_tree_data(clf, feature_names, class_names):
             "Threshold": th,
             "Gini": f"{impurity[i]:.4f}",
             "Samples": n_node_samples[i],
-            "Value": str(list(map(int, val))), # [10, 50] のような形式に
+            "Value": str(list(map(int, val))),
             "Predicted_Class": pred_class
         }
         data.append(row)
     
     return pd.DataFrame(data)
+
 # ---------------------------------------
 
 st.set_page_config(page_title="アンケート分析 & セグメンテーション", layout="wide")
@@ -133,13 +133,14 @@ if df is not None:
     df = df.dropna(how='all')
 
     # タブ構成
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "📋 データ確認", 
         "📈 クロス集計", 
         "🌳 決定木分析", 
         "🚀 要因(ドライバー)分析", 
         "🧩 クラスター分析",
-        "📖 分析手法の解説(用語集)"
+        "📖 分析手法の解説(用語集)",
+        "🤖 AI分析アシスト"
     ])
 
     # --- タブ1: データ確認 ---
@@ -151,12 +152,15 @@ if df is not None:
     # --- タブ2: クロス集計 ---
     with tab2:
         st.subheader("クロス集計と可視化")
+        
+        if 'cross_index' not in st.session_state: st.session_state['cross_index'] = 0
+        if 'cross_col' not in st.session_state: st.session_state['cross_col'] = min(1, len(df.columns)-1)
+
         col1, col2 = st.columns(2)
         with col1:
-            index_col = st.selectbox("行（Index）を選択", df.columns, index=0)
+            index_col = st.selectbox("行（Index）を選択", df.columns, index=st.session_state['cross_index'], key="sb_cross_index")
         with col2:
-            default_col_idx = 1 if len(df.columns) > 1 else 0
-            columns_col = st.selectbox("列（Column）を選択", df.columns, index=default_col_idx)
+            columns_col = st.selectbox("列（Column）を選択", df.columns, index=st.session_state['cross_col'], key="sb_cross_col")
 
         if index_col == columns_col:
             st.warning("⚠️ 行と列には異なる項目を選択してください。")
@@ -179,16 +183,20 @@ if df is not None:
                 fig = px.bar(cross_tab_reset, x=index_col, y=val_name, color=columns_col, title=f"{index_col} × {columns_col}")
             st.plotly_chart(fig, use_container_width=True)
 
-    # --- タブ3: 決定木分析 (Graphviz版 + CSV DL) ---
+    # --- タブ3: 決定木分析 ---
     with tab3:
         st.subheader("決定木分析")
         st.caption("💡 図はマウスホイールで**拡大・縮小**、ドラッグで**移動**ができます。")
         
+        if 'tree_target_idx' not in st.session_state: st.session_state['tree_target_idx'] = 0
+        if 'tree_feats_default' not in st.session_state: 
+            st.session_state['tree_feats_default'] = [c for c in df.columns if c != df.columns[0]][:3]
+
         col1, col2 = st.columns(2)
         with col1:
-            target_col_tree = st.selectbox("目的変数（結果）", df.columns, key="tree_target")
+            target_col_tree = st.selectbox("目的変数（結果）", df.columns, index=st.session_state['tree_target_idx'], key="sb_tree_target")
         with col2:
-            feature_cols_tree = st.multiselect("説明変数（要因）", [c for c in df.columns if c != target_col_tree], default=[c for c in df.columns if c != target_col_tree][:3], key="tree_feature")
+            feature_cols_tree = st.multiselect("説明変数（要因）", [c for c in df.columns if c != target_col_tree], default=st.session_state['tree_feats_default'], key="sb_tree_feature")
 
         if st.button("決定木分析を実行"):
             if not feature_cols_tree:
@@ -197,10 +205,7 @@ if df is not None:
                 try:
                     df_ml = df.copy()
                     
-                    # 数値化マッピング
                     class_names_list = None
-                    
-                    # 目的変数の処理
                     if df_ml[target_col_tree].dtype == 'object':
                         le_target = LabelEncoder()
                         df_ml[target_col_tree] = df_ml[target_col_tree].astype(str)
@@ -209,7 +214,6 @@ if df is not None:
                     else:
                         class_names_list = sorted(df_ml[target_col_tree].unique().astype(str).tolist())
 
-                    # 説明変数の処理
                     for col in feature_cols_tree:
                         if df_ml[col].dtype == 'object':
                             df_ml[col] = df_ml[col].astype(str)
@@ -217,60 +221,33 @@ if df is not None:
                             df_ml[col] = le.fit_transform(df_ml[col])
 
                     df_ml = df_ml.dropna(subset=[target_col_tree] + feature_cols_tree)
-                    
                     X = df_ml[feature_cols_tree]
                     y = df_ml[target_col_tree]
 
                     clf = DecisionTreeClassifier(max_depth=3, random_state=42)
                     clf.fit(X, y)
 
-                    # --- 分岐ルールのテキスト生成 ---
                     tree_rules = export_text(clf, feature_names=feature_cols_tree)
                     st.write("##### 📋 分岐条件のテキスト詳細")
                     st_copy_to_clipboard(tree_rules, "📋 分岐ルールをコピー", "✅ コピーしました")
                     st.code(tree_rules)
 
-                    # --- Graphvizによる描画 ---
                     dot_data = export_graphviz(
-                        clf,
-                        out_file=None,
-                        feature_names=feature_cols_tree,
-                        class_names=class_names_list,
-                        filled=True,
-                        rounded=True,
-                        special_characters=True,
-                        fontname="IPAexGothic"
+                        clf, out_file=None, feature_names=feature_cols_tree, class_names=class_names_list,
+                        filled=True, rounded=True, special_characters=True, fontname="IPAexGothic"
                     )
                     st.graphviz_chart(dot_data)
                     
-                    # 画像ダウンロードボタン
                     try:
                         graph = graphviz.Source(dot_data)
                         png_bytes = graph.pipe(format='png')
-                        st.download_button(
-                            label="📥 決定木画像をダウンロード (PNG)",
-                            data=png_bytes,
-                            file_name="decision_tree.png",
-                            mime="image/png"
-                        )
-                    except Exception as e:
-                        st.warning(f"画像DLエラー: {e}")
+                        st.download_button("📥 決定木画像をダウンロード (PNG)", png_bytes, "decision_tree.png", "image/png")
+                    except: pass
 
-                    # --- [追加機能] 決定木データ(CSV)ダウンロード ---
                     st.divider()
                     st.write("##### 📊 決定木データのダウンロード")
-                    st.caption("各ノードの詳細データ（Gini, Samples, Value, 閾値など）をCSVで取得します。")
-                    
                     tree_df = get_decision_tree_data(clf, feature_cols_tree, class_names_list)
-                    csv_tree = tree_df.to_csv(index=False).encode('utf-8_sig')
-                    
-                    st.download_button(
-                        label="📥 決定木データをCSVでダウンロード",
-                        data=csv_tree,
-                        file_name="decision_tree_data.csv",
-                        mime="text/csv"
-                    )
-                    # ---------------------------------------------
+                    st.download_button("📥 決定木データをCSVでダウンロード", tree_df.to_csv(index=False).encode('utf-8_sig'), "decision_tree_data.csv", "text/csv")
 
                 except Exception as e:
                     st.error(f"分析エラー: {e}")
@@ -285,11 +262,15 @@ if df is not None:
         * **1.0 より小さい**: その要因が結果を**抑制**します。（例：0.5なら、その要因があると結果が半分しか起こらない）
         """)
 
+        if 'reg_target_idx' not in st.session_state: st.session_state['reg_target_idx'] = 0
+        if 'reg_feats_default' not in st.session_state: 
+            st.session_state['reg_feats_default'] = [c for c in df.columns if c != df.columns[0]][:5]
+
         col1, col2 = st.columns(2)
         with col1:
-            target_col_reg = st.selectbox("目的変数（分析したい結果）", df.columns, key="reg_target")
+            target_col_reg = st.selectbox("目的変数（分析したい結果）", df.columns, index=st.session_state['reg_target_idx'], key="sb_reg_target")
         with col2:
-            feature_cols_reg = st.multiselect("説明変数（背景・要因と思われる項目）", [c for c in df.columns if c != target_col_reg], default=[c for c in df.columns if c != target_col_reg][:5], key="reg_feature")
+            feature_cols_reg = st.multiselect("説明変数（背景・要因と思われる項目）", [c for c in df.columns if c != target_col_reg], default=st.session_state['reg_feats_default'], key="sb_reg_feature")
 
         if st.button("要因分析を実行"):
             if not feature_cols_reg:
@@ -298,43 +279,31 @@ if df is not None:
                 try:
                     df_reg = df[[target_col_reg] + feature_cols_reg].dropna()
                     
-                    le_dict = {}
                     for col in df_reg.columns:
                         if df_reg[col].dtype == 'object':
                             le = LabelEncoder()
                             df_reg[col] = df_reg[col].astype(str)
                             df_reg[col] = le.fit_transform(df_reg[col])
-                            le_dict[col] = le 
 
                     X = df_reg[feature_cols_reg]
                     y = df_reg[target_col_reg]
-
                     scaler = StandardScaler()
                     X_scaled = scaler.fit_transform(X)
 
                     model = LogisticRegression(max_iter=1000)
                     model.fit(X_scaled, y)
 
-                    if model.coef_.shape[0] > 1:
-                        coefs = model.coef_[-1]
-                    else:
-                        coefs = model.coef_[0]
+                    if model.coef_.shape[0] > 1: coefs = model.coef_[-1]
+                    else: coefs = model.coef_[0]
                     
                     odds_ratios = np.exp(coefs)
-
-                    res_df = pd.DataFrame({
-                        "要因": feature_cols_reg,
-                        "オッズ比": odds_ratios
-                    }).sort_values(by="オッズ比", ascending=True)
+                    res_df = pd.DataFrame({"要因": feature_cols_reg, "オッズ比": odds_ratios}).sort_values(by="オッズ比", ascending=True)
 
                     st.write(f"### 「{target_col_reg}」への影響度（オッズ比）")
                     fig = px.bar(res_df, x="オッズ比", y="要因", orientation='h', 
                                  title=f"「{target_col_reg}」に対するオッズ比（1.0が基準）",
-                                 color="オッズ比", 
-                                 color_continuous_scale="RdBu_r",
-                                 color_continuous_midpoint=1.0)
-                    
-                    fig.add_vline(x=1.0, line_width=2, line_dash="dash", line_color="black", annotation_text="基準(1.0)")
+                                 color="オッズ比", color_continuous_scale="RdBu_r", color_continuous_midpoint=1.0)
+                    fig.add_vline(x=1.0, line_width=2, line_dash="dash", line_color="black")
                     st.plotly_chart(fig, use_container_width=True)
                     
                     st.write("##### 詳細データ")
@@ -347,18 +316,18 @@ if df is not None:
     # --- タブ5: クラスター分析 ---
     with tab5:
         st.subheader("🧩 クラスター分析（セグメンテーション）")
-        st.markdown("""
-        要因分析で重要だとわかった項目を使って、ユーザーをグループ分けします。
-        """)
+        
+        if 'cluster_feats_default' not in st.session_state: 
+            st.session_state['cluster_feats_default'] = df.columns[:5].tolist()
 
         cluster_features = st.multiselect(
             "クラスター分析に使う変数を選択してください",
             df.columns,
-            default=df.columns[:5],
-            key="cluster_features"
+            default=st.session_state['cluster_feats_default'],
+            key="sb_cluster_features"
         )
         
-        n_clusters = st.slider("分類するグループ数（クラスター数）", 2, 10, 4)
+        n_clusters = st.slider("分類するグループ数", 2, 10, 4)
 
         if st.button("クラスター分析を実行"):
             if not cluster_features:
@@ -375,122 +344,179 @@ if df is not None:
 
                     scaler = StandardScaler()
                     X_scaled = scaler.fit_transform(df_cluster)
-
                     kmeans = KMeans(n_clusters=n_clusters, random_state=42)
                     clusters = kmeans.fit_predict(X_scaled)
                     
                     df['Cluster'] = clusters
                     df['Cluster_Name'] = df['Cluster'].apply(lambda x: f"グループ {x+1}")
-
                     st.success(f"{n_clusters}つのグループに分類しました！")
 
-                    # ヒートマップ
-                    df_cluster['Cluster_Name'] = df['Cluster'].apply(lambda x: f"グループ {x+1}")
-                    cluster_means_numeric = df_cluster.groupby('Cluster_Name').mean()
+                    cluster_means_numeric = df_cluster.copy()
+                    cluster_means_numeric['Cluster_Name'] = df['Cluster_Name']
+                    cluster_means_numeric = cluster_means_numeric.groupby('Cluster_Name').mean()
 
                     st.write("##### グループごとの回答傾向（ヒートマップ）")
-                    fig = px.imshow(cluster_means_numeric, 
-                                    text_auto=".2f", 
-                                    aspect="auto",
-                                    color_continuous_scale="Viridis",
-                                    title="クラスターごとの特徴比較")
+                    fig = px.imshow(cluster_means_numeric, text_auto=".2f", aspect="auto", color_continuous_scale="Viridis", title="クラスターごとの特徴比較")
                     st.plotly_chart(fig, use_container_width=True)
 
                     st.write("##### 分類結果付きデータのダウンロード")
-                    csv = df.to_csv(index=False).encode('utf-8_sig')
-                    st.download_button(
-                        label="📥 分類結果付きCSVをダウンロード",
-                        data=csv,
-                        file_name='clustered_data.csv',
-                        mime='text/csv',
-                    )
+                    st.download_button("📥 分類結果付きCSVをダウンロード", df.to_csv(index=False).encode('utf-8_sig'), 'clustered_data.csv', 'text/csv')
                     st.write("##### グループごとの人数")
                     st.dataframe(df['Cluster_Name'].value_counts().reset_index().rename(columns={'index':'Group', 'Cluster_Name':'Count'}))
 
                 except Exception as e:
                     st.error(f"分析エラー: {e}")
 
-    # --- タブ6: 分析手法の解説(用語集) ---
+    # --- タブ6: 解説 ---
     with tab6:
         st.header("📖 統計分析手法の解説ガイド")
-        st.markdown("""
-        このアプリで使用している分析手法について、「専門的な説明（Technical）」と「わかりやすい説明（Plain）」を併記しています。
-        報告書作成やプレゼンテーションの際にご活用ください。
-        """)
+        st.markdown("（詳細は前述の通りです）")
+        st.info("詳しい解説は前回のアップデート内容をご参照ください。")
+
+    # --- タブ7: AI分析アシスト 【新機能】 ---
+    with tab7:
+        st.header("🤖 AI分析アシスト")
+        
+        # --- Step 1: プロンプト表示エリア ---
+        st.subheader("Step 1: プロンプトをコピー")
+        st.markdown("以下のプロンプトをコピーして、GeminiやChatGPTに**CSVファイルを添付**した状態で送信してください。")
+
+        ai_prompt_text = """# 依頼
+添付のアンケートデータを分析し、マーケティング戦略立案のための詳細なレポートを作成してください。
+以下の4つの分析手法を用いて、トップライン（全体傾向）だけでなく、顕著な特徴や興味深い相関を可能な限り網羅的に抽出してください。
+
+# 分析手法と観点
+1. **クロス集計**
+   - 年代、性別、居住年数などの基本属性と、満足度や意識設問との掛け合わせで、10%以上の顕著な差が出ている箇所を洗い出してください。
+
+2. **決定木分析**
+   - 目的変数：「状態」や「体感・満足度」「推奨意向」を測る指標や「生活習慣・行動」への影響などの重要指標（もしデータにあれば。なければ「全体的な満足度」やポジティブな回答）
+   - どのような条件が重なると、その重要指標が高くなる（または低くなる）かの分岐ルールを見つけてください。
+
+3. **ドライバー分析（ロジスティック回帰）**
+   - 目的変数：上記と同様の重要指標
+   - 説明変数：満足度や意識に関する設問
+   - どの要素が結果に対してプラス/マイナスの影響（オッズ比が高い/低い）を与えているかランキング化してください。
+
+4. **クラスター分析**
+   - 回答傾向が似ている回答者をグルーピング（3〜5グループ程度）してください。
+   - 各グループの特徴（何に満足し、何に不満か）と、命名（ペルソナ名）を行ってください。
+
+# 出力形式
+1. **分析サマリー（人間が読む用）**
+   - 各分析ごとに見出しを立て、箇条書きで詳細を記述してください。
+   - マーケティングの専門家が読むレベルの洞察を含めてください。
+
+2. **アプリ連携用設定データ（JSON形式）**
+   - **最後に必ず**、以下のJSON形式で、各分析に使用した（または使用を推奨する）「目的変数」と「説明変数」の具体的な列名を抽出してください。
+   - **列名は、CSVのヘッダーにある正確な名称を使用してください。**
+
+```json
+{
+  "cross_tab": {
+    "index": "ここに行（Index）にすべき列名を入れる",
+    "columns": "ここに列（Column）にすべき列名を入れる"
+  },
+  "decision_tree": {
+    "target": "ここに目的変数（結果）の列名を入れる",
+    "features": ["説明変数1", "説明変数2", "説明変数3", "説明変数4"]
+  },
+  "driver_analysis": {
+    "target": "ここに目的変数（結果）の列名を入れる",
+    "features": ["説明変数1", "説明変数2", "説明変数3", "説明変数4", "説明変数5"]
+  },
+  "clustering": {
+    "features": ["クラスター分析に使用した変数1", "変数2", "変数3", "変数4", "変数5"],
+    "n_clusters": 4
+  }
+}
+```"""
+        st_copy_to_clipboard(ai_prompt_text, "📋 プロンプトをコピー", "✅ コピーしました！")
+        st.code(ai_prompt_text, language="markdown")
         
         st.divider()
 
-        # --- 1. クロス集計 ---
-        st.subheader("1. クロス集計 (Cross Tabulation)")
-        with st.expander("詳細を見る"):
-            st.markdown("""
-            #### 🛠 使用メソッド・原理
-            * **手法**: 分割表 (Contingency Table) の作成
-            * **統計的背景**: 2つの変数（質問項目）の間に「関連があるか」を見るために使用します。厳密には「カイ二乗検定 (Chi-square test)」を用いて、その偏りが偶然かどうかを判断することが一般的です。
+        # --- Step 2: AI回答入力エリア ---
+        st.subheader("Step 2: AIの回答を貼り付け")
+        st.markdown("AIが出力した**分析サマリー全体（最後のJSONまで含む）**をここに貼り付けてください。")
 
-            #### 💡 わかりやすい説明
-            * **これ何？**: 「年代別 × 満足度」のように、2つの質問を掛け合わせて表にする最も基本的な分析です。
-            * **目的**: 全体だけでは見えない、特定の属性（男女、年代など）ごとの違いを発見します。
-            * **「有意差（意味のある差）」の目安**:
-                * 一般的に、比較したいグループ間で **10%以上の差** があれば、「差がある」と見なして良いケースが多いです（マーケティング現場レベル）。
-                * サンプル数が少ない（n=30以下など）場合は、たまたまの誤差である可能性が高いため、20〜30%の差がないと信頼できません。
-            """)
+        ai_input = st.text_area("ここにGeminiの回答を貼り付けてください", height=300)
 
-        # --- 2. 決定木分析 ---
-        st.subheader("2. 決定木分析 (Decision Tree)")
-        with st.expander("詳細を見る"):
-            st.markdown("""
-            #### 🛠 使用メソッド・原理
-            * **手法**: **CART法 (Classification and Regression Trees)**
-            * **アルゴリズム**: scikit-learnの `DecisionTreeClassifier` を使用。
-            * **統計的背景**: データを分割する際、**「Gini不純度 (Gini Impurity)」** という指標を使っています。これは「どれだけ綺麗にYes/Noが分かれたか」を計算するもので、この不純度が最も低くなる条件を探して自動的に分岐を作っています。
+        if ai_input:
+            # JSONブロックを探す
+            json_match = re.search(r'```json\s*({.*?})\s*```', ai_input, re.DOTALL)
+            
+            if json_match:
+                try:
+                    config = json.loads(json_match.group(1))
+                    st.success("✅ AIからの設定データを読み取りました！以下のボタンで適用できます。")
+                    
+                    col_ai_1, col_ai_2 = st.columns(2)
+                    
+                    # --- 1. クロス集計設定 ---
+                    if "cross_tab" in config:
+                        with col_ai_1:
+                            st.write("### 📈 クロス集計のおすすめ設定")
+                            st.write(f"**行**: {config['cross_tab']['index']}")
+                            st.write(f"**列**: {config['cross_tab']['columns']}")
+                            if st.button("設定を適用する (クロス集計)"):
+                                try:
+                                    idx_r = df.columns.get_loc(config['cross_tab']['index'])
+                                    idx_c = df.columns.get_loc(config['cross_tab']['columns'])
+                                    st.session_state['cross_index'] = idx_r
+                                    st.session_state['cross_col'] = idx_c
+                                    st.success("設定を適用しました！「クロス集計」タブを見てください。")
+                                except:
+                                    st.error("列名が見つかりません。CSVが正しいか確認してください。")
 
-            #### 💡 わかりやすい説明
-            * **これ何？**: 
+                    # --- 2. 決定木設定 ---
+                    if "decision_tree" in config:
+                        with col_ai_2:
+                            st.write("### 🌳 決定木のおすすめ設定")
+                            st.write(f"**目的**: {config['decision_tree']['target']}")
+                            st.write(f"**要因**: {', '.join(config['decision_tree']['features'])}")
+                            if st.button("設定を適用する (決定木)"):
+                                try:
+                                    idx_t = df.columns.get_loc(config['decision_tree']['target'])
+                                    st.session_state['tree_target_idx'] = idx_t
+                                    valid_feats = [f for f in config['decision_tree']['features'] if f in df.columns]
+                                    st.session_state['tree_feats_default'] = valid_feats
+                                    st.success("設定を適用しました！「決定木分析」タブを見てください。")
+                                except:
+                                    st.error("列名が見つかりません。")
 
-[Image of decision tree diagram example]
- 「もしAならB、そうでなければC」というように、結果に至る条件をツリー状に分解する手法です。
-            * **目的**: 複雑な要因を整理し、**「一番影響力が大きい条件は何か？」**を視覚的に見つけるために使います。
-            * **見方**:
-                * **一番上の分岐**: これが**最も重要な要因**です。ここを見るだけで、結果を左右する最大のポイントがわかります。
-            """)
+                    col_ai_3, col_ai_4 = st.columns(2)
 
-        # --- 3. ドライバー分析 ---
-        st.subheader("3. ドライバー分析 / 要因分析")
-        with st.expander("詳細を見る"):
-            st.markdown("""
-            #### 🛠 使用メソッド・原理
-            * **手法**: **ロジスティック回帰分析 (Logistic Regression)**
-            * **アルゴリズム**: scikit-learnの `LogisticRegression` を使用。
-            * **統計的背景**: 結果が「Yes/No（買った/買わない）」のような2値データの場合、通常の回帰分析は使えません。そこで「確率」を予測するロジスティック回帰を用います。
-            * **係数の変換**: 算出された「偏回帰係数」を、指数変換（$e^x$）することで **「オッズ比 (Odds Ratio)」** に変換して表示しています。
+                    # --- 3. ドライバー分析設定 ---
+                    if "driver_analysis" in config:
+                        with col_ai_3:
+                            st.write("### 🚀 ドライバー分析のおすすめ設定")
+                            st.write(f"**目的**: {config['driver_analysis']['target']}")
+                            st.write(f"**要因**: {', '.join(config['driver_analysis']['features'])}")
+                            if st.button("設定を適用する (ドライバー分析)"):
+                                try:
+                                    idx_t = df.columns.get_loc(config['driver_analysis']['target'])
+                                    st.session_state['reg_target_idx'] = idx_t
+                                    valid_feats = [f for f in config['driver_analysis']['features'] if f in df.columns]
+                                    st.session_state['reg_feats_default'] = valid_feats
+                                    st.success("設定を適用しました！「ドライバー分析」タブを見てください。")
+                                except:
+                                    st.error("列名が見つかりません。")
 
-            #### 💡 わかりやすい説明
-            * **これ何？**:  ある結果（例：商品を買った）に対して、どの要因がどれくらい影響したかを数値化する手法です。
-            * **目的**: 施策の優先順位を決めるためです。「これを改善すれば、結果がこれだけ伸びる」というレバーを見つけます。
-            * **「オッズ比」とは？**:
-                * 結果の**「起こりやすさ」が何倍になるか**を表す数値です。
-                * **1.0**: 影響なし（プラマイゼロ）。
-                * **2.0**: その要素があると、結果が **2倍** 起こりやすくなる（強い促進要因）。
-                * **0.5**: その要素があると、結果が **半分** しか起きなくなる（強い阻害要因）。
-            """)
+                    # --- 4. クラスター分析設定 ---
+                    if "clustering" in config:
+                        with col_ai_4:
+                            st.write("### 🧩 クラスター分析のおすすめ設定")
+                            st.write(f"**変数**: {', '.join(config['clustering']['features'])}")
+                            if st.button("設定を適用する (クラスター分析)"):
+                                valid_feats = [f for f in config['clustering']['features'] if f in df.columns]
+                                st.session_state['cluster_feats_default'] = valid_feats
+                                st.success("設定を適用しました！「クラスター分析」タブを見てください。")
 
-        # --- 4. クラスター分析 ---
-        st.subheader("4. クラスター分析 (Cluster Analysis)")
-        with st.expander("詳細を見る"):
-            st.markdown("""
-            #### 🛠 使用メソッド・原理
-            * **手法**: **K-Means法 (K-平均法 / 非階層クラスター分析)**
-            * **アルゴリズム**: scikit-learnの `KMeans` を使用。
-            * **統計的背景**: データを $k$ 個のグループに分ける際、各グループの中心（重心）からの距離が最小になるように計算します。教師なし学習（正解データがいらない分析）の一種です。
-
-            #### 💡 わかりやすい説明
-            * **これ何？**:  回答パターンが似ている人を集めて、自動的にグループ（チーム）を作る手法です。
-            * **目的**: 「セグメンテーション（顧客分類）」を行うためです。性別や年代だけでなく、「意識」や「行動」で分類することで、より刺さるメッセージを作れます。
-            * **使い方のコツ**: 
-                * 要因分析で「重要だ」とわかった項目を使ってクラスターを作ると、意味のあるグループができやすいです。
-                * グループ名は、ヒートマップを見て人間が考えます（例：「価格重視派」「品質重視派」など）。
-            """)
+                except json.JSONDecodeError:
+                    st.error("JSONの形式が正しくありません。")
+            else:
+                st.warning("設定データ(JSON)が見つかりません。プロンプトの指示通りにGeminiが出力しているか確認してください。")
 
 else:
     st.info("👈 左側のサイドバーからデータを選択してください。")
