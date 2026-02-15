@@ -6,3 +6,4 @@ matplotlib
 openpyxl
 st-gsheets-connection
 st-copy-to-clipboard
+graphviz
